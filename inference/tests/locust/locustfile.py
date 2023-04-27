@@ -15,7 +15,7 @@ class ChatUser(HttpUser):
     conversation_length = random.randint(3, 20)
     time_to_respond = random.randint(3, 5)  # for the user
     # model_config_name = "distilgpt2"
-    model_config_name = "OA_SFT_Pythia_12B"
+    model_config_name = "OA_SFT_Pythia_12Bq"
 
     @task
     def chat(self):

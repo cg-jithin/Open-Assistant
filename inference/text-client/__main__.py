@@ -10,7 +10,7 @@ app = typer.Typer()
 
 
 @app.command()
-def main(backend_url: str = "http://127.0.0.1:8000", model_config_name="OA_SFT_Pythia_12B", username="test1"):
+def main(backend_url: str = "http://127.0.0.1:8000", model_config_name="OA_SFT_Pythia_12Bq", username="test1"):
     """Simple REPL client."""
     while True:
         try:
