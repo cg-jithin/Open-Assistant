@@ -256,6 +256,12 @@ services:
       - "./inference/worker:/opt/inference/worker"
     deploy:
       replicas: 1
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]
     profiles: ["inference"]
 
   inference-safety:
