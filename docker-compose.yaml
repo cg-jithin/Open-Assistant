@@ -243,7 +243,7 @@ services:
 
   inference-worker:
     build:
-      dockerfile: docker/inference/Dockerfile.worker-hf
+      dockerfile: docker/inference/Dockerfile.worker-full
       context: .
     image: oasst-inference-worker:dev
     environment:
