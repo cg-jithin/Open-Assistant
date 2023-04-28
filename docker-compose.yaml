@@ -255,7 +255,7 @@ services:
       - "./oasst-shared:/opt/inference/lib/oasst-shared"
       - "./inference/worker:/opt/inference/worker"
     deploy:
-      replicas: 1
+      replicas: 2
       resources:
         reservations:
           devices:
