@@ -3,7 +3,7 @@
 mkdir -p $HOME/.cache/huggingface
 echo -n "$HF_TOKEN" > $HOME/.cache/huggingface/token
 
-export MODEL_CONFIG_NAME=${MODEL_CONFIG_NAME:-"OA_SFT_Pythia_12Bq"}
+export MODEL_CONFIG_NAME=${MODEL_CONFIG_NAME:-"OA_SFT_Pythia_12Bq_4"}
 
 num_shards=${NUM_SHARDS:-1}
 load_sleep=${LOAD_SLEEP:-0}

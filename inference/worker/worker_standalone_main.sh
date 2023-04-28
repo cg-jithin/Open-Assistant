@@ -8,7 +8,7 @@ echo -n "$HF_TOKEN" > $HF_HOME/token
 
 export HUGGING_FACE_HUB_TOKEN=$HF_TOKEN
 
-export MODEL_CONFIG_NAME=${MODEL_CONFIG_NAME:-"OA_SFT_Pythia_12Bq"}
+export MODEL_CONFIG_NAME=${MODEL_CONFIG_NAME:-"OA_SFT_Pythia_12Bq_4"}
 export MODEL_ID=$(python get_model_config_prop.py model_id)
 export QUANTIZE=$(python get_model_config_prop.py quantized)
 
