@@ -12,7 +12,7 @@ class Settings(pydantic.BaseSettings):
 
     retry_on_error: bool = True
     hf_pause: float = 0.075
-    max_parallel_requests: int = 1
+    max_parallel_requests: int = 3
     use_stop_sequences: bool = False
 
     perform_oom_test: bool = False
