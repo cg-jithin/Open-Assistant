@@ -2,12 +2,14 @@ import re
 import threading
 from concurrent import futures
 
+import chat_chain
 import interface
 import requests
 import sseclient
 import transformers
 import utils
 import websocket
+from chat_chain_prompts import ASSISTANT_PREFIX, END_SEQ, OBSERVATION_SEQ, START_SEQ, THOUGHT_SEQ
 from loguru import logger
 from oasst_shared.schemas import inference
 from settings import settings
@@ -25,12 +27,19 @@ def truncate_prompt(
         ids = tokenizer.encode(prompt)
 
     max_input_length = worker_config.model_config.max_input_length
+    # make room for prompter prefix
+    if V2_PROMPTER_PREFIX not in prompt:
+        max_input_length = max_input_length - 1
+
     max_total_tokens = worker_config.model_config.max_total_length
     if len(ids) > max_input_length:
         logger.warning(f"Prompt too long, left-truncating to {max_input_length} tokens")
         ids = ids[-(max_input_length - 1) :]
         with tokenizer_lock:
             prompt = tokenizer.decode(ids)
+            # If there is no prompter prefix, due to truncation, add it back.
+            if V2_PROMPTER_PREFIX not in prompt:
+                prompt = V2_PROMPTER_PREFIX + prompt
 
     input_length = len(ids)
     spare = max_total_tokens - input_length - 1
@@ -80,24 +89,22 @@ def make_prompt_and_parameters(
     return prompt, parameters
 
 
-def prepare_safe_prompt(prompt: str, label: str, rots: str):
+def prepare_safe_prompt(prompt: str, label: str, rots: str) -> str:
     pre_prompt = f"Answer the following request with {label} as responsible chatbot that believes that {rots}: "
     input_list = prompt.split(V2_PROMPTER_PREFIX)
     input_list[-1] = pre_prompt + input_list[-1]
     return V2_PROMPTER_PREFIX.join(input_list)
 
 
-def get_safety_opinion(prompt: str, safety_opinion: str, safety_level: int):
+def is_safety_triggered(safety_label: str, safety_level: int) -> bool:
+    return ("caution" in safety_label and safety_level > 1) or ("intervention" in safety_label and safety_level > 0)
+
+
+def parse_safety_response(safety_opinion: str) -> tuple[str, str]:
     safety_opinion = re.sub(r"<pad>|</s>", "", safety_opinion).split("<sep>")
     label, rots = safety_opinion[0], "and".join([x.strip(".") for x in safety_opinion[1:]])
     label = label.replace("<pad>", "").strip()
-
-    if "caution" in label and safety_level > 1:
-        return prepare_safe_prompt(prompt, label, rots)
-    elif "intervention" in label and safety_level > 0:
-        return prepare_safe_prompt(prompt, label, rots)
-    else:
-        return prompt
+    return label, rots
 
 
 def handle_work_request(
@@ -106,7 +113,25 @@ def handle_work_request(
     work_request: inference.WorkRequest,
     worker_config: inference.WorkerConfig,
 ):
-    prompt, parameters = make_prompt_and_parameters(tokenizer=tokenizer, work_request=work_request)
+    parameters = interface.GenerateStreamParameters.from_work_parameters(work_request.parameters)
+    prompt = ""
+    used_plugin = None
+
+    # Check if any plugin is enabled, if so, use it.
+    for plugin in parameters.plugins:
+        if plugin.enabled:
+            prompt, used_plugin = chat_chain.handle_conversation(work_request, worker_config, parameters, tokenizer)
+            # When using plugins, and final prompt being truncated due to the input
+            # length limit, LLaMA llm has tendency to leak internal promptings,
+            # and generate undesirable continuations, so here we will be adding
+            # some plugin keywords/sequences to the stop sequences to try preventing it
+            parameters.stop.extend([END_SEQ, START_SEQ, THOUGHT_SEQ, ASSISTANT_PREFIX])
+            break
+
+    # If no plugin was "used", use the default prompt generation.
+    if not used_plugin:
+        prompt, parameters = make_prompt_and_parameters(tokenizer=tokenizer, work_request=work_request)
+
     logger.debug(f"Prompt: {prompt}")
 
     model_config = worker_config.model_config
@@ -115,8 +140,23 @@ def handle_work_request(
     if settings.enable_safety and work_request.safety_parameters.level:
         safety_request = inference.SafetyRequest(inputs=prompt, parameters=work_request.safety_parameters)
         safety_response = get_safety_server_response(safety_request)
-        prompt = get_safety_opinion(prompt, safety_response.outputs, work_request.safety_parameters.level)
-        logger.debug(f"Safe prompt: {prompt}")
+        safety_label, safety_rots = parse_safety_response(safety_response.outputs)
+
+        if is_safety_triggered(safety_label, work_request.safety_parameters.level):
+            prompt = prepare_safe_prompt(prompt, safety_label, safety_rots)
+
+            utils.send_response(
+                ws,
+                inference.SafePromptResponse(
+                    request_id=work_request.id,
+                    safe_prompt=prompt,
+                    safety_parameters=work_request.safety_parameters,
+                    safety_label=safety_label,
+                    safety_rots=safety_rots,
+                ),
+            )
+
+            logger.debug(f"Safe prompt: {prompt}")
 
     stream_response = None
     token_buffer = utils.TokenBuffer(stop_sequences=parameters.stop)
@@ -174,6 +214,19 @@ def handle_work_request(
 
     if model_config.is_llama:
         stream_response.generated_text = stream_response.generated_text.strip()
+        # Get the generated text up to the first occurrence of any of:
+        # START_SEQ, END_SEQ, ASSISTANT_PREFIX, THOUGHT_SEQ, OBSERVATION_SEQ
+        end_seq_index = min(
+            [
+                stream_response.generated_text.find(seq)
+                for seq in [START_SEQ, END_SEQ, ASSISTANT_PREFIX, THOUGHT_SEQ, OBSERVATION_SEQ]
+                if seq in stream_response.generated_text
+            ]
+            + [len(stream_response.generated_text)]
+        )
+        if end_seq_index != -1 and used_plugin is not None:
+            stream_response.generated_text = stream_response.generated_text[:end_seq_index]
+
     logger.info(f"Done. {stream_response=}")
     utils.send_response(
         ws,
@@ -182,6 +235,7 @@ def handle_work_request(
             text=stream_response.generated_text,
             finish_reason=stream_response.details.finish_reason,
             metrics=inference.WorkerMetricsInfo(),
+            used_plugin=used_plugin,
         ),
     )
     logger.debug("Work complete. Waiting for more work...")
