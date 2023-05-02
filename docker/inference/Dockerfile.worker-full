@@ -23,7 +23,7 @@ COPY ./${APP_RELATIVE_PATH}/*.py .
 COPY ./${APP_RELATIVE_PATH}/worker_full_main.sh /entrypoint.sh
 
 ENV MODEL_CONFIG_NAME="OA_SFT_Pythia_12Bq_4"
-ENV NUM_SHARDS="1"
+ENV NUM_SHARDS="2"
 
 # These are upper bounds for the inference server.
 ENV MAX_INPUT_LENGTH="4096"
